@@ -1,0 +1,85 @@
+services:
+  redis:
+    image: redis:7
+    container_name: redis
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis-data:/data
+
+  db:
+    image: postgres:16-alpine
+    container_name: app-db
+    env_file: .env
+    ports:
+      - '5432:5432'
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ---------------------------------------------------------
+  # One-shot init container: runs db:push once then exits 0
+  # ---------------------------------------------------------
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: app-migrate
+    env_file: .env
+    environment:
+      NODE_ENV: production
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      sh -c "
+      pnpm --filter @workspace/database run generate &&
+      pnpm --filter @workspace/database run db:push
+      "
+    restart: 'no'
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: app-api
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      JWT_SECRET: ${JWT_SECRET}
+      PORT: 3333
+      # optional, falls du redis im api nutzt:
+      # REDIS_URL: redis://redis:6379
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - '3333:3333'
+    command: >
+      sh -c "
+      node apps/api/dist/src/main.js
+      "
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    container_name: app-web
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+    depends_on:
+      - api
+    ports:
+      - '3000:3000'
+
+volumes:
+  db_data:
+  redis-data:

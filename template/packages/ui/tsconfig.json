@@ -1,0 +1,26 @@
+{
+  "extends": "@workspace/typescript-config/react-library.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@workspace/ui/*": ["./src/*"]
+    }
+  },
+  "include": [
+    ".",
+    "../../../web-new/components/ui/alert-dialog.tsx",
+    "../../../web-new/components/ui/badge.tsx",
+    "../../../web-new/components/ui/button.tsx",
+    "../../../web-new/components/ui/card.tsx",
+    "../../../web-new/components/ui/combobox.tsx",
+    "../../../web-new/components/ui/dropdown-menu.tsx",
+    "../../../web-new/components/ui/field.tsx",
+    "../../../web-new/components/ui/input-group.tsx",
+    "../../../web-new/components/ui/input.tsx",
+    "../../../web-new/components/ui/label.tsx",
+    "../../../web-new/components/ui/select.tsx",
+    "../../../web-new/components/ui/separator.tsx",
+    "../../../web-new/components/ui/textarea.tsx"
+  ],
+  "exclude": ["node_modules", "dist"]
+}

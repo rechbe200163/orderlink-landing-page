@@ -1,0 +1,9 @@
+**/node_modules
+**/.next
+**/dist
+**/.turbo
+.git
+.gitignore
+Dockerfile
+docker-compose.yml
+.env
