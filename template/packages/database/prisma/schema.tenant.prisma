@@ -1,7 +1,6 @@
-generator client {
-  provider      = "prisma-client-js"
-  output        = "../generated/prisma/client"
-  binaryTargets = ["native", "debian-openssl-3.0.x", "linux-arm64-openssl-3.0.x"]
+generator tenantClient {
+  provider = "prisma-client-js"
+  output   = "../generated/tenant/client"
 }
 
 datasource db {
@@ -61,8 +60,6 @@ model Address {
   streetNumber String       @db.VarChar(30)
   modifiedAt   DateTime?    @updatedAt
   deleted      Boolean      @default(false)
-  longitude    Float?
-  latitude     Float?
   customers    Customer[]
   siteConfig   SiteConfig[]
 

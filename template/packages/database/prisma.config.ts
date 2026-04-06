@@ -1,11 +1,17 @@
-import { defineConfig, env } from 'prisma/config';
+import path from 'node:path';
+import { defineConfig } from 'prisma/config';
+
+const loadEnvFile = Reflect.get(process, 'loadEnvFile') as
+  | undefined
+  | ((path?: string) => void);
+
+loadEnvFile?.(path.resolve(import.meta.dirname, '.env'));
 
 export default defineConfig({
-  schema: 'prisma/schema.prisma',
   migrations: {
     path: 'prisma/migrations',
   },
   datasource: {
-    url: env('DATABASE_URL'),
+    url: process.env.DATABASE_URL,
   },
 });

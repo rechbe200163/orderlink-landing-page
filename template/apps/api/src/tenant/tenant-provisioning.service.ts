@@ -1,5 +1,10 @@
-import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+} from '@nestjs/common';
 import { execFile } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { access, readFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -16,22 +21,111 @@ interface DatabasePackageJson {
   };
 }
 
+interface TenantProvisioningAddressInput {
+  addressId?: string;
+  city?: string;
+  country?: string;
+  postCode?: string;
+  state?: string;
+  streetName?: string;
+  streetNumber?: string;
+}
+
+interface TenantProvisioningSeedOptions {
+  subdomain?: string;
+  companyName?: string;
+  email?: string;
+  phoneNumber?: string;
+  iban?: string;
+  companyNumber?: string;
+  address?: TenantProvisioningAddressInput;
+  superAdmin?: {
+    email?: string;
+    firstName?: string;
+    lastName?: string;
+    password?: string;
+  };
+}
+
 @Injectable()
 export class TenantProvisioningService {
   private readonly logger = new Logger(TenantProvisioningService.name);
 
-  async pushSchemaWithRetry(databaseUrl: string): Promise<void> {
-    await this.withRetry(
-      async () => {
-        await this.runPrismaCommand(['db', 'push'], databaseUrl);
+  private static readonly DEFAULT_SUPER_ADMIN_FIRST_NAME = 'Super';
+  private static readonly DEFAULT_SUPER_ADMIN_LAST_NAME = 'Admin';
+  private static readonly DEFAULT_SUPER_ADMIN_EMAIL_LOCAL_PART = 'admin';
+  private static readonly DEFAULT_SITE_CONFIG_EMAIL_LOCAL_PART = 'office';
+  private static readonly DEFAULT_PHONE_NUMBER = '+430000000000';
+  private static readonly DEFAULT_IBAN = 'AT000000000000000000';
+  private static readonly DEFAULT_COMPANY_NUMBER = 'PENDING';
+
+  private buildNormalizedSeedPayload(
+    options?: TenantProvisioningSeedOptions,
+  ): TenantProvisioningSeedOptions {
+    const normalizedSubdomain = options?.subdomain?.trim() || 'tenant';
+    const normalizedCompanyName =
+      options?.companyName?.trim() || normalizedSubdomain;
+    const normalizedAddress = this.normalizeAddress(options?.address);
+    const normalizedEmailDomain = `${normalizedSubdomain}.admin.local`;
+
+    return {
+      subdomain: normalizedSubdomain,
+      companyName: normalizedCompanyName,
+      email:
+        options?.email?.trim() ||
+        `${TenantProvisioningService.DEFAULT_SITE_CONFIG_EMAIL_LOCAL_PART}@${normalizedEmailDomain}`,
+      phoneNumber:
+        options?.phoneNumber?.trim() ||
+        TenantProvisioningService.DEFAULT_PHONE_NUMBER,
+      iban: options?.iban?.trim() || TenantProvisioningService.DEFAULT_IBAN,
+      companyNumber:
+        options?.companyNumber?.trim() ||
+        TenantProvisioningService.DEFAULT_COMPANY_NUMBER,
+      address: normalizedAddress,
+      superAdmin: {
+        email:
+          options?.superAdmin?.email?.trim() ||
+          `${TenantProvisioningService.DEFAULT_SUPER_ADMIN_EMAIL_LOCAL_PART}@${normalizedEmailDomain}`,
+        firstName:
+          options?.superAdmin?.firstName?.trim() ||
+          TenantProvisioningService.DEFAULT_SUPER_ADMIN_FIRST_NAME,
+        lastName:
+          options?.superAdmin?.lastName?.trim() ||
+          TenantProvisioningService.DEFAULT_SUPER_ADMIN_LAST_NAME,
+        password:
+          options?.superAdmin?.password?.trim() ||
+          this.generateTemporaryPassword(),
       },
-      'Prisma schema push',
-    );
+    };
+  }
+
+  private normalizeAddress(
+    address?: TenantProvisioningAddressInput,
+  ): TenantProvisioningAddressInput {
+    return {
+      addressId: address?.addressId,
+      city: address?.city?.trim() || 'Unknown City',
+      country: address?.country?.trim() || 'Unknown Country',
+      postCode: address?.postCode?.trim() || '0000',
+      state: address?.state?.trim() || 'Unknown State',
+      streetName: address?.streetName?.trim() || 'Unknown Street',
+      streetNumber: address?.streetNumber?.trim() || '0',
+    };
+  }
+
+  private generateTemporaryPassword(length = 24): string {
+    return randomBytes(length).toString('base64url').slice(0, length);
+  }
+
+  async pushSchemaWithRetry(databaseUrl: string): Promise<void> {
+    await this.withRetry(async () => {
+      await this.runPrismaCommand(['db', 'push'], databaseUrl);
+    }, 'Prisma schema push');
   }
 
   async seedWithRetry(
     databaseUrl: string,
-    options?: { subdomain?: string },
+    options?: TenantProvisioningSeedOptions,
   ): Promise<void> {
     if (!(await this.hasSeedScriptConfigured())) {
       this.logger.log(
@@ -40,15 +134,31 @@ export class TenantProvisioningService {
       return;
     }
 
-    await this.withRetry(
-      async () => {
-        await this.runPrismaCommand(['db', 'seed'], databaseUrl, {
-          PRISMA_SCHEMA_TARGET: 'tenant',
-          TENANT_SEED_SUBDOMAIN: options?.subdomain ?? 'tenant',
-        });
-      },
-      'Prisma seed',
-    );
+    const payload = this.buildNormalizedSeedPayload(options);
+
+    await this.withRetry(async () => {
+      await this.runPrismaCommand(['db', 'seed'], databaseUrl, {
+        PRISMA_SCHEMA_TARGET: 'tenant',
+        TENANT_SEED_SUBDOMAIN: payload.subdomain ?? 'tenant',
+        TENANT_SEED_PAYLOAD: JSON.stringify(payload),
+      });
+    }, 'Prisma seed');
+  }
+
+  private buildSeedEnv(
+    options?: TenantProvisioningSeedOptions,
+  ): Record<string, string> {
+    const payload = this.buildNormalizedSeedPayload(options);
+
+    return {
+      TENANT_SEED_PAYLOAD: JSON.stringify(payload),
+    };
+  }
+
+  buildSeedPreview(
+    options?: TenantProvisioningSeedOptions,
+  ): TenantProvisioningSeedOptions {
+    return this.buildNormalizedSeedPayload(options);
   }
 
   private async runPrismaCommand(
@@ -57,7 +167,10 @@ export class TenantProvisioningService {
     extraEnv: Record<string, string> = {},
   ): Promise<void> {
     const databasePackageDir = await this.getDatabasePackageDir();
-    const schemaPath = path.join(databasePackageDir, 'prisma/tenant-schema.prisma');
+    const schemaPath = path.join(
+      databasePackageDir,
+      'prisma/schema.tenant.prisma',
+    );
     const prismaCliPath = localRequire.resolve('prisma/build/index.js', {
       paths: [databasePackageDir],
     });

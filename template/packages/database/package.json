@@ -20,22 +20,29 @@
     "seed": "tsx ./prisma/seed.ts"
   },
   "scripts": {
-    "db:migrate:deploy": "prisma migrate deploy --schema=./prisma/schema.prisma",
-    "db:migrate:dev": "prisma migrate dev --schema=./prisma/schema.prisma",
-    "db:push": "prisma db push --schema=./prisma/schema.prisma",
+    "db:migrate:deploy": "prisma migrate deploy --schema=./prisma/schema.master.prisma",
+    "db:migrate:dev": "prisma migrate dev --schema=./prisma/schema.master.prisma",
+    "db:push": "prisma db push --schema=./prisma/schema.master.prisma",
+    "db:push:tenant": "prisma db push --schema=./prisma/schema.tenant.prisma",
     "db:seed": "tsx ./prisma/seed.ts",
-    "generate": "prisma generate --schema=./prisma/schema.prisma",
+    "generate": "pnpm run generate:master && pnpm run generate:tenant",
+    "generate:master": "prisma generate --schema=./prisma/schema.master.prisma",
+    "generate:tenant": "prisma generate --schema=./prisma/schema.tenant.prisma",
     "build": "tsup --config tsup.config.ts",
     "dev": "tsup --config tsup.config.ts --watch",
-    "format": "prisma format --schema=./prisma/schema.prisma",
+    "format": "pnpm run format:master && pnpm run format:tenant",
+    "format:master": "prisma format --schema=./prisma/schema.master.prisma",
+    "format:tenant": "prisma format --schema=./prisma/schema.tenant.prisma",
     "lint": "eslint . --max-warnings 0",
     "prebuild": "npm run generate",
     "predev": "npm run generate",
-    "studio": "prisma studio --schema=./prisma/schema.prisma"
+    "studio": "prisma studio --schema=./prisma/schema.master.prisma",
+    "studio:tenant": "prisma studio --schema=./prisma/schema.tenant.prisma"
   },
   "dependencies": {
     "@brakebein/prisma-generator-nestjs-dto": "^1.29.0",
-    "@prisma/client": "latest"
+    "@prisma/client": "latest",
+    "bcrypt": "^6.0.0"
   },
   "devDependencies": {
     "eslint": "latest",

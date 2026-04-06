@@ -37,7 +37,7 @@ const DEFAULT_RESOURCES = [
 async function instantiateTenantPrismaClient(): Promise<TenantPrismaClient> {
   const clientModulePath = path.resolve(
     import.meta.dirname,
-    '../generated/prisma/client/index.js',
+    '../generated/tenant/client/index.js',
   );
   const clientModuleUrl = pathToFileURL(clientModulePath).href;
   const module = (await import(clientModuleUrl)) as {
