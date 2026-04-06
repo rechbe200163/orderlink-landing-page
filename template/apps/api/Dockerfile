@@ -23,7 +23,9 @@ RUN pnpm install --frozen-lockfile
 FROM node:22-alpine AS build
 WORKDIR /repo
 RUN corepack enable && corepack prepare pnpm@latest --activate
+ARG DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres
 ENV NODE_ENV=production
+ENV DATABASE_URL=${DATABASE_URL}
 
 COPY --from=deps /repo/node_modules ./node_modules
 COPY --from=deps /repo/apps/api/node_modules ./apps/api/node_modules
@@ -39,7 +41,9 @@ RUN pnpm --filter api run build
 # ------------------------
 FROM node:22-alpine AS runner
 WORKDIR /repo
+ARG DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres
 ENV NODE_ENV=production
+ENV DATABASE_URL=${DATABASE_URL}
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
@@ -59,4 +63,3 @@ COPY --from=build /repo/apps/api/dist ./apps/api/dist
 
 EXPOSE 3001
 CMD ["node", "apps/api/dist/src/main.js"]
-
