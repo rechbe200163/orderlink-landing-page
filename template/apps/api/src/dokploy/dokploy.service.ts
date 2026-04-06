@@ -53,7 +53,7 @@ export class DokployService {
   async createPostgressDatabase(
     createTenantDto: CreateTenantDto,
   ): Promise<{ databaseUrl: string }> {
-    const existingDatabase = await this.findExistingDatabase(
+    const existingDatabase = await this.findExistingDatabaseWithDetails(
       createTenantDto.subdomain,
     );
 
@@ -62,7 +62,22 @@ export class DokployService {
         `Reusing existing Dokploy database for tenant ${createTenantDto.subdomain} before creating a new one.`,
       );
 
-      return existingDatabase;
+      const deployedExistingDatabase = await this.ensureDatabaseDeployed(
+        existingDatabase,
+        createTenantDto.subdomain,
+      );
+
+      const existingDatabaseUrl = this.resolveDatabaseUrl(
+        deployedExistingDatabase,
+      );
+
+      if (!existingDatabaseUrl) {
+        throw new InternalServerErrorException(
+          `Failed to resolve database URL for existing tenant ${createTenantDto.subdomain}`,
+        );
+      }
+
+      return { databaseUrl: existingDatabaseUrl };
     }
 
     const requestPayload = this.buildCreatePayload(createTenantDto);
@@ -94,16 +109,42 @@ export class DokployService {
     }
 
     const createdCandidate = this.extractConnectionCandidate(data);
+
+    if (!createdCandidate) {
+      throw new InternalServerErrorException(
+        'Dokploy created the database, but no connection candidate could be extracted',
+      );
+    }
+
+    if (!createdCandidate.postgresId) {
+      this.logger.warn(
+        `Dokploy did not return a postgresId for tenant ${createTenantDto.subdomain}. This may cause issues with database reuse and cleanup.`,
+      );
+    }
+
+    this.logger.log(
+      `Successfully created Dokploy database for tenant ${createTenantDto.subdomain}. Deploying database and resolving connection details...`,
+    );
+
+    const deployedCandidate = await this.ensureDatabaseDeployed(
+      createdCandidate,
+      createTenantDto.subdomain,
+    );
+
+    const refreshedCandidate = deployedCandidate.postgresId
+      ? await this.fetchPostgresById(deployedCandidate.postgresId)
+      : null;
+
+    const resolvedCandidate = refreshedCandidate ?? deployedCandidate;
     const createdDatabase =
-      (createdCandidate?.databaseUrl || createdCandidate?.externalPort
-        ? this.resolveDatabaseUrl(createdCandidate, requestPayload)
-        : null) ??
-      (await this.findExistingDatabase(createTenantDto.subdomain))?.databaseUrl ??
+      this.resolveDatabaseUrl(resolvedCandidate, requestPayload) ??
+      (await this.findExistingDatabaseWithDetails(createTenantDto.subdomain))
+        ?.databaseUrl ??
       this.resolveDatabaseUrl(createdCandidate, requestPayload);
 
     if (!createdDatabase) {
       throw new InternalServerErrorException(
-        'Dokploy created the database, but no databaseUrl could be resolved',
+        'Dokploy created and deployed the database, but no databaseUrl could be resolved',
       );
     }
 
@@ -112,6 +153,45 @@ export class DokployService {
     );
 
     return { databaseUrl: createdDatabase };
+  }
+
+  private async deployDatabase(postgresId: string): Promise<void> {
+    const resp = await fetch(`${this.dokployURl}/postgres.deploy`, {
+      method: 'POST',
+      headers: this.buildHeaders(),
+      body: JSON.stringify({ postgresId }),
+    });
+
+    if (!resp.ok) {
+      const data = await this.parseResponseBody(resp);
+      throw new InternalServerErrorException(
+        `Failed to deploy database: ${this.extractErrorMessage(data)}`,
+      );
+    }
+
+    this.logger.log(
+      `Successfully triggered deployment for postgresId ${postgresId}.`,
+    );
+  }
+
+  private async ensureDatabaseDeployed(
+    candidate: DokployConnectionCandidate,
+    subdomain: string,
+  ): Promise<DokployConnectionCandidate> {
+    if (!candidate.postgresId) {
+      this.logger.warn(
+        `Skipping Dokploy deploy for tenant ${subdomain} because no postgresId was returned.`,
+      );
+      return candidate;
+    }
+
+    await this.deployDatabase(candidate.postgresId);
+
+    const refreshedCandidate = await this.fetchPostgresById(
+      candidate.postgresId,
+    );
+
+    return refreshedCandidate ?? candidate;
   }
 
   private buildCreatePayload(
@@ -134,6 +214,20 @@ export class DokployService {
   private async findExistingDatabase(
     subdomain: string,
   ): Promise<{ databaseUrl: string } | null> {
+    const details = await this.findExistingDatabaseWithDetails(subdomain);
+
+    if (!details) {
+      return null;
+    }
+
+    const databaseUrl = this.resolveDatabaseUrl(details);
+
+    return databaseUrl ? { databaseUrl } : null;
+  }
+
+  private async findExistingDatabaseWithDetails(
+    subdomain: string,
+  ): Promise<DokployConnectionCandidate | null> {
     const response = await fetch(
       `${this.dokployURl}/postgres.search?name=${encodeURIComponent(subdomain)}&limit=50`,
       {
@@ -177,19 +271,10 @@ export class DokployService {
     }
 
     if (!selected.postgresId) {
-      const databaseUrl = this.resolveDatabaseUrl(selected);
-      return databaseUrl ? { databaseUrl } : null;
+      return selected;
     }
 
-    const details = await this.fetchPostgresById(selected.postgresId);
-
-    if (!details) {
-      return null;
-    }
-
-    const databaseUrl = this.resolveDatabaseUrl(details);
-
-    return databaseUrl ? { databaseUrl } : null;
+    return await this.fetchPostgresById(selected.postgresId);
   }
 
   private async fetchPostgresById(
@@ -207,7 +292,9 @@ export class DokployService {
       return null;
     }
 
-    return this.extractConnectionCandidate(await this.parseResponseBody(response));
+    return this.extractConnectionCandidate(
+      await this.parseResponseBody(response),
+    );
   }
 
   private extractConnectionCandidate(
