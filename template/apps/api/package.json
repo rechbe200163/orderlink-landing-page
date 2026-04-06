@@ -30,10 +30,12 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.3",
     "express-basic-auth": "^1.2.1",
+    "nanoid": "^5.1.7",
     "passport-jwt": "^4.0.1",
     "prisma-extension-pagination": "^0.7.6",
     "reflect-metadata": "^0.2.0",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@jest/globals": "^29.7.0",
@@ -44,6 +46,7 @@
     "@types/node": "^22.10.7",
     "@types/passport-jwt": "^4.0.1",
     "@types/supertest": "^6.0.0",
+    "@workspace/database": "workspace:*",
     "@workspace/eslint-config": "workspace:^",
     "@workspace/typescript-config": "workspace:*",
     "eslint": "^9.31.0",
