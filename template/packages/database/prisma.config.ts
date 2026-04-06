@@ -5,7 +5,19 @@ const loadEnvFile = Reflect.get(process, 'loadEnvFile') as
   | undefined
   | ((path?: string) => void);
 
-loadEnvFile?.(path.resolve(import.meta.dirname, '.env'));
+const envFilePath = path.resolve(import.meta.dirname, '.env');
+
+try {
+  loadEnvFile?.(envFilePath);
+} catch (error) {
+  if (
+    !(error instanceof Error) ||
+    !('code' in error) ||
+    error.code !== 'ENOENT'
+  ) {
+    throw error;
+  }
+}
 
 export default defineConfig({
   migrations: {
