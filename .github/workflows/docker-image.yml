@@ -26,7 +26,7 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
-          context: ./
+          context: ./template
           file: ./template/apps/api/Dockerfile
           push: true
           platforms: linux/arm64, linux/amd64
