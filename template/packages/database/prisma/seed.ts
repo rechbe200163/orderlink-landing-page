@@ -1,4 +1,3 @@
-import { randomBytes } from 'node:crypto';
 import * as bcrypt from 'bcrypt';
 import { ModuleEnum, PrismaClient } from '../generated/tenant/client';
 
@@ -22,11 +21,11 @@ type SeedPayload = {
     email?: string;
     firstName?: string;
     lastName?: string;
-    password?: string;
   };
 };
 
 const prisma = new PrismaClient();
+const SUPER_ADMIN_PASSWORD = 'kennwort1';
 
 function parsePayload(): SeedPayload {
   const raw = process.env.TENANT_SEED_PAYLOAD;
@@ -36,10 +35,6 @@ function parsePayload(): SeedPayload {
   }
 
   return JSON.parse(raw) as SeedPayload;
-}
-
-function generatePassword(length = 24): string {
-  return randomBytes(length).toString('base64url').slice(0, length);
 }
 
 async function main() {
@@ -58,10 +53,7 @@ async function main() {
     payload.superAdmin?.email?.trim() || `admin@${domain}`;
   const superAdminFirstName = payload.superAdmin?.firstName?.trim() || 'Super';
   const superAdminLastName = payload.superAdmin?.lastName?.trim() || 'Admin';
-  const superAdminPlainPassword =
-    payload.superAdmin?.password?.trim() || generatePassword();
-
-  const hashedPassword = await bcrypt.hash(superAdminPlainPassword, 12);
+  const hashedPassword = await bcrypt.hash(SUPER_ADMIN_PASSWORD, 10);
 
   const address = await prisma.address.create({
     data: {
@@ -145,7 +137,13 @@ async function main() {
 
   await prisma.employees.upsert({
     where: { email: superAdminEmail },
-    update: {},
+    update: {
+      password: hashedPassword,
+      firstName: superAdminFirstName,
+      lastName: superAdminLastName,
+      superAdmin: true,
+      roleId: adminRole.roleId,
+    },
     create: {
       email: superAdminEmail,
       password: hashedPassword,
@@ -209,7 +207,6 @@ async function main() {
         subdomain,
         superAdmin: {
           email: superAdminEmail,
-          password: superAdminPlainPassword,
         },
       },
       null,

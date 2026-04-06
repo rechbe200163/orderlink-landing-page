@@ -4,7 +4,6 @@ import {
   Logger,
 } from '@nestjs/common';
 import { execFile } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
 import { access, readFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -43,7 +42,6 @@ interface TenantProvisioningSeedOptions {
     email?: string;
     firstName?: string;
     lastName?: string;
-    password?: string;
   };
 }
 
@@ -92,9 +90,6 @@ export class TenantProvisioningService {
         lastName:
           options?.superAdmin?.lastName?.trim() ||
           TenantProvisioningService.DEFAULT_SUPER_ADMIN_LAST_NAME,
-        password:
-          options?.superAdmin?.password?.trim() ||
-          this.generateTemporaryPassword(),
       },
     };
   }
@@ -111,10 +106,6 @@ export class TenantProvisioningService {
       streetName: address?.streetName?.trim() || 'Unknown Street',
       streetNumber: address?.streetNumber?.trim() || '0',
     };
-  }
-
-  private generateTemporaryPassword(length = 24): string {
-    return randomBytes(length).toString('base64url').slice(0, length);
   }
 
   async pushSchemaWithRetry(databaseUrl: string): Promise<void> {

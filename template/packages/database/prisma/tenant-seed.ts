@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import * as bcrypt from 'bcrypt';
 
 type TenantPrismaClient = {
   role: {
@@ -33,6 +34,7 @@ const DEFAULT_ACTIONS = [
 const DEFAULT_RESOURCES = [
   { key: 'all', description: 'Wildcard resource for superadmin access' },
 ] as const;
+const SUPER_ADMIN_PASSWORD = 'kennwort1';
 
 async function instantiateTenantPrismaClient(): Promise<TenantPrismaClient> {
   const clientModulePath = path.resolve(
@@ -52,7 +54,7 @@ export async function runTenantSeed(): Promise<void> {
   const roleName = 'SUPERADMIN';
   const tenantSubdomain = process.env.TENANT_SEED_SUBDOMAIN ?? 'tenant';
   const employeeEmail = `superadmin@${tenantSubdomain}.local`;
-  const employeePassword = process.env.TENANT_SUPERADMIN_PASSWORD ?? 'ChangeMe123!';
+  const employeePassword = await bcrypt.hash(SUPER_ADMIN_PASSWORD, 10);
 
   try {
     const role = await prisma.role.upsert({
