@@ -4,24 +4,21 @@ import {
   Logger,
 } from '@nestjs/common';
 import { execFile } from 'node:child_process';
-import { access, readdir, readFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
+import { access, readdir, readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
+import { Socket } from 'node:net';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const localRequire = createRequire(__filename);
-const RETRY_ATTEMPTS = 3;
-const INITIAL_BACKOFF_MS = 500;
+const RETRY_ATTEMPTS = 10;
+const INITIAL_BACKOFF_MS = 2000;
+const MAX_BACKOFF_MS = 5000;
+const DB_READINESS_TIMEOUT_MS = 2000;
 
 interface DatabasePackageJson {
   prisma?: {
-    seed?: string;
-  };
-}
-
-interface PrismaConfigLike {
-  migrations?: {
     seed?: string;
   };
 }
@@ -115,7 +112,8 @@ export class TenantProvisioningService {
   }
 
   async pushSchemaWithRetry(databaseUrl: string): Promise<void> {
-    await this.withRetry(async () => {
+    await this.withRetry(async (attempt) => {
+      await this.waitForDatabaseReady(databaseUrl, attempt);
       await this.runPrismaCommand(['db', 'push'], databaseUrl);
     }, 'Prisma schema push');
   }
@@ -133,7 +131,8 @@ export class TenantProvisioningService {
 
     const payload = this.buildNormalizedSeedPayload(options);
 
-    await this.withRetry(async () => {
+    await this.withRetry(async (attempt) => {
+      await this.waitForDatabaseReady(databaseUrl, attempt);
       await this.runPrismaCommand(['db', 'seed'], databaseUrl, {
         PRISMA_SCHEMA_TARGET: 'tenant',
         TENANT_SEED_SUBDOMAIN: payload.subdomain ?? 'tenant',
@@ -146,6 +145,68 @@ export class TenantProvisioningService {
     options?: TenantProvisioningSeedOptions,
   ): TenantProvisioningSeedOptions {
     return this.buildNormalizedSeedPayload(options);
+  }
+
+  private async waitForDatabaseReady(
+    databaseUrl: string,
+    attempt: number,
+  ): Promise<void> {
+    const url = new URL(databaseUrl);
+    const host = url.hostname;
+    const port = Number(url.port || 5432);
+
+    this.logger.log(
+      `Checking database readiness for ${host}:${port} before attempt ${attempt}/${RETRY_ATTEMPTS}`,
+    );
+
+    await this.waitForTcpConnection(host, port);
+  }
+
+  private async waitForTcpConnection(
+    host: string,
+    port: number,
+  ): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      const socket = new Socket();
+      let settled = false;
+
+      const cleanup = () => {
+        socket.removeAllListeners();
+        socket.destroy();
+      };
+
+      const succeed = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        resolve();
+      };
+
+      const fail = (error: Error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        reject(
+          new InternalServerErrorException(
+            `Database host ${host}:${port} is not reachable yet: ${error.message}`,
+          ),
+        );
+      };
+
+      socket.setTimeout(DB_READINESS_TIMEOUT_MS);
+      socket.once('connect', succeed);
+      socket.once('timeout', () =>
+        fail(
+          new Error(`connection timed out after ${DB_READINESS_TIMEOUT_MS}ms`),
+        ),
+      );
+      socket.once('error', fail);
+      socket.connect(port, host);
+    });
   }
 
   private async runPrismaCommand(
@@ -210,14 +271,14 @@ export class TenantProvisioningService {
   }
 
   private async withRetry(
-    task: () => Promise<void>,
+    task: (attempt: number) => Promise<void>,
     label: string,
   ): Promise<void> {
     let lastError: unknown;
 
     for (let attempt = 1; attempt <= RETRY_ATTEMPTS; attempt += 1) {
       try {
-        await task();
+        await task(attempt);
         return;
       } catch (error) {
         lastError = error;
@@ -226,10 +287,16 @@ export class TenantProvisioningService {
           break;
         }
 
-        const backoffMs = INITIAL_BACKOFF_MS * 2 ** (attempt - 1);
+        const backoffMs = Math.min(
+          INITIAL_BACKOFF_MS * 2 ** (attempt - 1),
+          MAX_BACKOFF_MS,
+        );
+
+        const message =
+          error instanceof Error ? error.message : 'Unknown retry error';
 
         this.logger.warn(
-          `${label} failed on attempt ${attempt}/${RETRY_ATTEMPTS}. Retrying in ${backoffMs}ms.`,
+          `${label} failed on attempt ${attempt}/${RETRY_ATTEMPTS}. Retrying in ${backoffMs}ms. Reason: ${message}`,
         );
 
         await delay(backoffMs);

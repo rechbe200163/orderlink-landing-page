@@ -24,7 +24,13 @@ type SeedPayload = {
   };
 };
 
-const prisma = new PrismaClient();
+const prisma = new PrismaClient({
+  datasources: {
+    db: {
+      url: process.env.DATABASE_URL,
+    },
+  },
+});
 const SUPER_ADMIN_PASSWORD = 'kennwort1';
 
 function parsePayload(): SeedPayload {
@@ -39,6 +45,9 @@ function parsePayload(): SeedPayload {
 
 async function main() {
   const payload = parsePayload();
+
+  console.log('SEED DATABASE_URL:', process.env.DATABASE_URL);
+  console.log('TENANT_SEED_PAYLOAD:', process.env.TENANT_SEED_PAYLOAD);
 
   const subdomain = payload.subdomain?.trim() || 'tenant';
   const companyName = payload.companyName?.trim() || subdomain;
@@ -153,6 +162,19 @@ async function main() {
       roleId: adminRole.roleId,
     },
   });
+
+  const seededEmployee = await prisma.employees.findUnique({
+    where: { email: superAdminEmail },
+    select: {
+      employeeId: true,
+      email: true,
+      superAdmin: true,
+      deleted: true,
+      roleId: true,
+    },
+  });
+
+  console.log('SEEDED SUPER ADMIN:', JSON.stringify(seededEmployee, null, 2));
 
   await prisma.siteConfig.create({
     data: {
