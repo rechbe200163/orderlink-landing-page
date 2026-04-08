@@ -4,7 +4,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { execFile } from 'node:child_process';
-import { access, readFile } from 'node:fs/promises';
+import { access, readdir, readFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -16,6 +16,12 @@ const INITIAL_BACKOFF_MS = 500;
 
 interface DatabasePackageJson {
   prisma?: {
+    seed?: string;
+  };
+}
+
+interface PrismaConfigLike {
+  migrations?: {
     seed?: string;
   };
 }
@@ -136,16 +142,6 @@ export class TenantProvisioningService {
     }, 'Prisma seed');
   }
 
-  private buildSeedEnv(
-    options?: TenantProvisioningSeedOptions,
-  ): Record<string, string> {
-    const payload = this.buildNormalizedSeedPayload(options);
-
-    return {
-      TENANT_SEED_PAYLOAD: JSON.stringify(payload),
-    };
-  }
-
   buildSeedPreview(
     options?: TenantProvisioningSeedOptions,
   ): TenantProvisioningSeedOptions {
@@ -158,18 +154,23 @@ export class TenantProvisioningService {
     extraEnv: Record<string, string> = {},
   ): Promise<void> {
     const databasePackageDir = await this.getDatabasePackageDir();
-    const schemaPath = path.join(
-      databasePackageDir,
-      'prisma/schema.tenant.prisma',
-    );
+    const schemaPath = await this.resolveTenantSchemaPath(databasePackageDir);
     const prismaCliPath = localRequire.resolve('prisma/build/index.js', {
       paths: [databasePackageDir],
     });
+    const prismaConfigPath = path.join(databasePackageDir, 'prisma.config.ts');
 
     await new Promise<void>((resolve, reject) => {
       execFile(
         process.execPath,
-        [prismaCliPath, ...args, '--schema', schemaPath],
+        [
+          prismaCliPath,
+          ...args,
+          '--schema',
+          schemaPath,
+          '--config',
+          prismaConfigPath,
+        ],
         {
           cwd: databasePackageDir,
           env: {
@@ -181,6 +182,9 @@ export class TenantProvisioningService {
         },
         (error, stdout, stderr) => {
           if (!error) {
+            this.logger.log(
+              `${args.join(' ')} completed successfully for ${new URL(databaseUrl).hostname}`,
+            );
             resolve();
             return;
           }
@@ -189,6 +193,10 @@ export class TenantProvisioningService {
           const enrichedOutput = this.enrichPrismaConnectionError(
             output,
             databaseUrl,
+          );
+
+          this.logger.error(
+            `${args.join(' ')} failed for ${databaseUrl}: ${enrichedOutput.trim()}`,
           );
 
           reject(
@@ -234,24 +242,91 @@ export class TenantProvisioningService {
   private async hasSeedScriptConfigured(): Promise<boolean> {
     const databasePackageDir = await this.getDatabasePackageDir();
     const packageJsonPath = path.join(databasePackageDir, 'package.json');
-    const packageJson = JSON.parse(
-      await readFile(packageJsonPath, 'utf8'),
-    ) as DatabasePackageJson;
+    const prismaConfigPath = path.join(databasePackageDir, 'prisma.config.ts');
 
-    const configuredSeedScript = packageJson.prisma?.seed;
+    let packageJsonSeed: string | undefined;
+
+    try {
+      const packageJson = JSON.parse(
+        await readFile(packageJsonPath, 'utf8'),
+      ) as DatabasePackageJson;
+      packageJsonSeed = packageJson.prisma?.seed;
+    } catch {
+      packageJsonSeed = undefined;
+    }
+
+    let prismaConfigSeed: string | undefined;
+
+    try {
+      const prismaConfigContent = await readFile(prismaConfigPath, 'utf8');
+      const seedMatch = prismaConfigContent.match(
+        /migrations\s*:\s*\{[\s\S]*?seed\s*:\s*['"`]([^'"`]+)['"`]/,
+      );
+      prismaConfigSeed = seedMatch?.[1]?.trim();
+    } catch {
+      prismaConfigSeed = undefined;
+    }
+
+    const configuredSeedScript = prismaConfigSeed || packageJsonSeed;
 
     if (!configuredSeedScript) {
       return false;
     }
 
-    const seedFilePath = path.join(databasePackageDir, 'prisma/seed.ts');
+    const candidateSeedFiles = [
+      path.join(databasePackageDir, 'prisma/seed.ts'),
+      path.join(databasePackageDir, 'prisma/seed.js'),
+      path.join(databasePackageDir, 'prisma/seed.mjs'),
+      path.join(databasePackageDir, 'prisma/seed.cjs'),
+    ];
+
+    for (const candidatePath of candidateSeedFiles) {
+      try {
+        await access(candidatePath, constants.F_OK);
+        return true;
+      } catch {
+        // continue
+      }
+    }
+
+    return false;
+  }
+
+  private async resolveTenantSchemaPath(
+    databasePackageDir: string,
+  ): Promise<string> {
+    const prismaDir = path.join(databasePackageDir, 'prisma');
+    const preferredSchemaPaths = [
+      path.join(prismaDir, 'schema.tenant.prisma'),
+      path.join(prismaDir, 'tenant-schema.prisma'),
+      path.join(prismaDir, 'schema.prisma'),
+    ];
+
+    for (const schemaPath of preferredSchemaPaths) {
+      try {
+        await access(schemaPath, constants.F_OK);
+        return schemaPath;
+      } catch {
+        // continue
+      }
+    }
 
     try {
-      await access(seedFilePath, constants.F_OK);
-      return true;
+      const prismaEntries = await readdir(prismaDir);
+      const prismaSchemaFile = prismaEntries.find((entry) =>
+        entry.endsWith('.prisma'),
+      );
+
+      if (prismaSchemaFile) {
+        return path.join(prismaDir, prismaSchemaFile);
+      }
     } catch {
-      return false;
+      // fall through to the final error below
     }
+
+    throw new InternalServerErrorException(
+      `Could not locate a Prisma schema file in ${prismaDir}`,
+    );
   }
 
   private async getDatabasePackageDir(): Promise<string> {
