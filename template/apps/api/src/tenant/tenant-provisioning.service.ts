@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { execFile } from 'node:child_process';
 import { constants } from 'node:fs';
-import { access, readdir, readFile } from 'node:fs/promises';
+import { access, readdir, readFile, stat } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { Socket } from 'node:net';
 import path from 'node:path';
@@ -21,6 +21,12 @@ interface DatabasePackageJson {
   prisma?: {
     seed?: string;
   };
+}
+
+interface SeedCommandResolution {
+  command: string;
+  source: 'package.json' | 'prisma.config.ts';
+  filePath?: string;
 }
 
 interface TenantProvisioningAddressInput {
@@ -122,14 +128,20 @@ export class TenantProvisioningService {
     databaseUrl: string,
     options?: TenantProvisioningSeedOptions,
   ): Promise<void> {
-    if (!(await this.hasSeedScriptConfigured())) {
-      this.logger.log(
-        'Skipping tenant seed because no Prisma seed script is configured.',
+    const seedCommand = await this.resolveSeedCommand();
+
+    if (!seedCommand) {
+      this.logger.warn(
+        'Skipping tenant seed because no Prisma seed command could be resolved in the runtime image.',
       );
       return;
     }
 
     const payload = this.buildNormalizedSeedPayload(options);
+
+    this.logger.log(
+      `Using tenant seed command from ${seedCommand.source}: ${seedCommand.command}`,
+    );
 
     await this.withRetry(async (attempt) => {
       await this.waitForDatabaseReady(databaseUrl, attempt);
@@ -237,6 +249,7 @@ export class TenantProvisioningService {
           env: {
             ...process.env,
             DATABASE_URL: databaseUrl,
+            TENANT_DATABASE_URL: databaseUrl,
             ...extraEnv,
           },
           maxBuffer: 10 * 1024 * 1024,
@@ -246,23 +259,30 @@ export class TenantProvisioningService {
             this.logger.log(
               `${args.join(' ')} completed successfully for ${new URL(databaseUrl).hostname}`,
             );
+
+            if (stdout?.trim()) {
+              this.logger.log(`${args.join(' ')} stdout: ${stdout.trim()}`);
+            }
             resolve();
             return;
           }
 
-          const output = stderr || stdout || error.message;
+          const output = [stderr, stdout, error.message]
+            .filter((value) => Boolean(value && value.trim()))
+            .join('\n')
+            .trim();
           const enrichedOutput = this.enrichPrismaConnectionError(
             output,
             databaseUrl,
           );
 
           this.logger.error(
-            `${args.join(' ')} failed for ${databaseUrl}: ${enrichedOutput.trim()}`,
+            `${args.join(' ')} failed for ${databaseUrl}: ${enrichedOutput}`,
           );
 
           reject(
             new InternalServerErrorException(
-              `${args.join(' ')} failed: ${enrichedOutput.trim()}`,
+              `${args.join(' ')} failed: ${enrichedOutput}`,
             ),
           );
         },
@@ -306,57 +326,123 @@ export class TenantProvisioningService {
     throw lastError;
   }
 
-  private async hasSeedScriptConfigured(): Promise<boolean> {
+  private async resolveSeedCommand(): Promise<SeedCommandResolution | null> {
     const databasePackageDir = await this.getDatabasePackageDir();
     const packageJsonPath = path.join(databasePackageDir, 'package.json');
     const prismaConfigPath = path.join(databasePackageDir, 'prisma.config.ts');
-
-    let packageJsonSeed: string | undefined;
 
     try {
       const packageJson = JSON.parse(
         await readFile(packageJsonPath, 'utf8'),
       ) as DatabasePackageJson;
-      packageJsonSeed = packageJson.prisma?.seed;
-    } catch {
-      packageJsonSeed = undefined;
-    }
+      const packageJsonSeed = packageJson.prisma?.seed?.trim();
 
-    let prismaConfigSeed: string | undefined;
+      if (packageJsonSeed) {
+        const resolvedFilePath = await this.tryResolveSeedFileFromCommand(
+          databasePackageDir,
+          packageJsonSeed,
+        );
+
+        return {
+          command: packageJsonSeed,
+          source: 'package.json',
+          filePath: resolvedFilePath,
+        };
+      }
+    } catch {
+      // continue
+    }
 
     try {
       const prismaConfigContent = await readFile(prismaConfigPath, 'utf8');
       const seedMatch = prismaConfigContent.match(
-        /migrations\s*:\s*\{[\s\S]*?seed\s*:\s*['"`]([^'"`]+)['"`]/,
+        /seed\s*:\s*['"`]([^'"`]+)['"`]/,
       );
-      prismaConfigSeed = seedMatch?.[1]?.trim();
+      const prismaConfigSeed = seedMatch?.[1]?.trim();
+
+      if (prismaConfigSeed) {
+        const resolvedFilePath = await this.tryResolveSeedFileFromCommand(
+          databasePackageDir,
+          prismaConfigSeed,
+        );
+
+        return {
+          command: prismaConfigSeed,
+          source: 'prisma.config.ts',
+          filePath: resolvedFilePath,
+        };
+      }
     } catch {
-      prismaConfigSeed = undefined;
+      // continue
     }
 
-    const configuredSeedScript = prismaConfigSeed || packageJsonSeed;
+    return null;
+  }
 
-    if (!configuredSeedScript) {
-      return false;
-    }
+  private async tryResolveSeedFileFromCommand(
+    databasePackageDir: string,
+    command: string,
+  ): Promise<string | undefined> {
+    const normalizedCommand = command.trim();
+    const commandParts = normalizedCommand
+      .split(/\s+/)
+      .map((part) => part.trim())
+      .filter(Boolean);
 
-    const candidateSeedFiles = [
+    const candidatePaths = commandParts
+      .filter(
+        (part) =>
+          part.endsWith('.ts') ||
+          part.endsWith('.js') ||
+          part.endsWith('.mjs') ||
+          part.endsWith('.cjs'),
+      )
+      .map((part) =>
+        path.isAbsolute(part) ? part : path.join(databasePackageDir, part),
+      );
+
+    const fallbackCandidatePaths = [
       path.join(databasePackageDir, 'prisma/seed.ts'),
       path.join(databasePackageDir, 'prisma/seed.js'),
       path.join(databasePackageDir, 'prisma/seed.mjs'),
       path.join(databasePackageDir, 'prisma/seed.cjs'),
     ];
 
-    for (const candidatePath of candidateSeedFiles) {
+    for (const candidatePath of [
+      ...candidatePaths,
+      ...fallbackCandidatePaths,
+    ]) {
       try {
-        await access(candidatePath, constants.F_OK);
-        return true;
+        const candidateStat = await stat(candidatePath);
+
+        if (candidateStat.isFile()) {
+          return candidatePath;
+        }
       } catch {
         // continue
       }
     }
 
-    return false;
+    return undefined;
+  }
+
+  private async ensureSeedRuntimeLooksValid(): Promise<void> {
+    const seedCommand = await this.resolveSeedCommand();
+
+    if (!seedCommand) {
+      return;
+    }
+
+    if (!seedCommand.filePath) {
+      this.logger.warn(
+        `Seed command was found in ${seedCommand.source}, but no seed file could be verified in the runtime image. Command: ${seedCommand.command}`,
+      );
+      return;
+    }
+
+    this.logger.log(
+      `Verified seed file for tenant provisioning: ${seedCommand.filePath}`,
+    );
   }
 
   private async resolveTenantSchemaPath(
@@ -401,6 +487,7 @@ export class TenantProvisioningService {
     const databasePackageDir = path.join(workspaceRoot, 'packages/database');
 
     await access(databasePackageDir, constants.F_OK);
+    await this.ensureSeedRuntimeLooksValid();
 
     return databasePackageDir;
   }
@@ -446,6 +533,15 @@ export class TenantProvisioningService {
 
     if (!hostname.includes('-app-')) {
       return output;
+    }
+
+    if (
+      output.includes('Command failed') ||
+      output.includes('tsx: not found') ||
+      output.includes('ts-node: not found') ||
+      output.includes('Cannot find module')
+    ) {
+      return `${output}\n\nThe tenant seed command was started, but the runtime image is missing the seed runner or one of its files/dependencies. In production this usually means the Docker image does not contain prisma/seed.ts, the compiled seed file, or the tsx/ts-node runtime needed by the configured Prisma seed command.`;
     }
 
     return `${output}\n\nDokploy returned the internal hostname ${hostname}. This hostname usually works only from containers in the Dokploy network. If apps/api is running locally, configure an external Dokploy database port or run the provisioning worker inside Dokploy.`;
