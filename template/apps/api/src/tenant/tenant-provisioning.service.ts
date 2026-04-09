@@ -4,12 +4,12 @@ import {
   Logger,
 } from '@nestjs/common';
 import { execFile } from 'node:child_process';
-import * as bcrypt from 'bcrypt';
 import { access, readdir } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { Socket } from 'node:net';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { hash } from 'bcryptjs';
 
 const RETRY_ATTEMPTS = 10;
 const INITIAL_BACKOFF_MS = 2000;
@@ -144,7 +144,7 @@ export class TenantProvisioningService {
 
     await access(seedFilePath, constants.F_OK);
 
-    const passwordHash = await bcrypt.hash(
+    const passwordHash = await hash(
       TenantProvisioningService.DEFAULT_SUPER_ADMIN_PASSWORD,
       10,
     );
