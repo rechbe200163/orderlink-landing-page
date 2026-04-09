@@ -1,5 +1,6 @@
 BEGIN;
--- Mapped Prisma tables use @@map(...) names; Module and EnabledModule keep Prisma default table names.
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 WITH existing_address AS (
   SELECT "addressId"
@@ -26,6 +27,7 @@ updated_address AS (
 ),
 inserted_address AS (
   INSERT INTO "addresses" (
+    "addressId",
     "city",
     "country",
     "postCode",
@@ -34,6 +36,7 @@ inserted_address AS (
     "streetNumber"
   )
   SELECT
+    gen_random_uuid(),
     :'address_city',
     :'address_country',
     :'address_post_code',
@@ -51,61 +54,40 @@ address_row AS (
   SELECT "addressId" FROM existing_address
   LIMIT 1
 )
-INSERT INTO "roles" ("name", "description")
-VALUES ('Admin', 'Default administrator role')
+INSERT INTO "roles" ("roleId", "name", "description")
+VALUES (gen_random_uuid(), 'Admin', 'Full access role')
 ON CONFLICT ("name") DO UPDATE
 SET "description" = EXCLUDED."description",
     "deleted" = false;
 
-INSERT INTO "actions" ("key", "description")
+INSERT INTO "actions" ("id", "key", "description")
 VALUES
-  ('create', 'create action'),
-  ('read', 'read action'),
-  ('update', 'update action'),
-  ('delete', 'delete action')
+  (gen_random_uuid(), 'create', 'create action'),
+  (gen_random_uuid(), 'read', 'read action'),
+  (gen_random_uuid(), 'update', 'update action'),
+  (gen_random_uuid(), 'delete', 'delete action')
 ON CONFLICT ("key") DO UPDATE
 SET "description" = EXCLUDED."description",
     "deleted" = false;
 
-INSERT INTO "resources" ("key", "description")
+INSERT INTO "resources" ("id", "key", "description")
 VALUES
-  ('employees', 'employees resource'),
-  ('roles', 'roles resource'),
-  ('permissions', 'permissions resource'),
-  ('products', 'products resource'),
-  ('categories', 'categories resource'),
-  ('customers', 'customers resource'),
-  ('orders', 'orders resource'),
-  ('routes', 'routes resource'),
-  ('site-config', 'site-config resource'),
-  ('modules', 'modules resource')
+  (gen_random_uuid(), 'employees', 'employees resource'),
+  (gen_random_uuid(), 'roles', 'roles resource'),
+  (gen_random_uuid(), 'permissions', 'permissions resource'),
+  (gen_random_uuid(), 'products', 'products resource'),
+  (gen_random_uuid(), 'categories', 'categories resource'),
+  (gen_random_uuid(), 'customers', 'customers resource'),
+  (gen_random_uuid(), 'orders', 'orders resource'),
+  (gen_random_uuid(), 'routes', 'routes resource'),
+  (gen_random_uuid(), 'site-config', 'site-config resource'),
+  (gen_random_uuid(), 'modules', 'modules resource')
 ON CONFLICT ("key") DO UPDATE
 SET "description" = EXCLUDED."description",
     "deleted" = false;
-
-INSERT INTO "permissions" ("roleId", "resourceId", "actionId", "allowed")
-SELECT role_row."roleId", resource_row."id", action_row."id", true
-FROM "roles" AS role_row
-CROSS JOIN "resources" AS resource_row
-CROSS JOIN "actions" AS action_row
-WHERE role_row."name" = 'Admin'
-  AND resource_row."key" IN (
-    'employees',
-    'roles',
-    'permissions',
-    'products',
-    'categories',
-    'customers',
-    'orders',
-    'routes',
-    'site-config',
-    'modules'
-  )
-  AND action_row."key" IN ('create', 'read', 'update', 'delete')
-ON CONFLICT ("roleId", "resourceId", "actionId") DO UPDATE
-SET "allowed" = EXCLUDED."allowed";
 
 INSERT INTO "employees" (
+  "employeeId",
   "email",
   "password",
   "firstName",
@@ -115,10 +97,11 @@ INSERT INTO "employees" (
   "roleId"
 )
 SELECT
-  :'super_admin_email',
-  :'super_admin_password_hash',
-  :'super_admin_first_name',
-  :'super_admin_last_name',
+  gen_random_uuid(),
+  'admin@admin.com',
+  'changeMe',
+  'Admin',
+  'User',
   false,
   true,
   role_row."roleId"
@@ -132,26 +115,38 @@ SET "password" = EXCLUDED."password",
     "superAdmin" = true,
     "roleId" = EXCLUDED."roleId";
 
+INSERT INTO "permissions" ("id", "roleId", "resourceId", "actionId", "allowed")
+SELECT gen_random_uuid(), role_row."roleId", resource_row."id", action_row."id", true
+FROM "roles" AS role_row
+CROSS JOIN "resources" AS resource_row
+CROSS JOIN "actions" AS action_row
+WHERE role_row."name" = 'Admin'
+ON CONFLICT ("roleId", "resourceId", "actionId") DO UPDATE
+SET "allowed" = EXCLUDED."allowed";
+
 INSERT INTO "siteConfigs" (
+  "siteConfigId",
   "companyName",
+  "logoPath",
   "email",
   "phoneNumber",
   "iban",
   "companyNumber",
-  "addressId",
-  "logoPath"
+  "addressId"
 )
 SELECT
+  gen_random_uuid(),
   :'company_name',
-  :'site_email',
+  '',
+  COALESCE(NULLIF(:'site_email', ''), 'admin@admin.com'),
   :'phone_number',
   :'iban',
   :'company_number',
-  address_row."addressId",
-  ''
+  address_row."addressId"
 FROM address_row
 ON CONFLICT ("email") DO UPDATE
 SET "companyName" = EXCLUDED."companyName",
+    "logoPath" = EXCLUDED."logoPath",
     "phoneNumber" = EXCLUDED."phoneNumber",
     "iban" = EXCLUDED."iban",
     "companyNumber" = EXCLUDED."companyNumber",
@@ -167,11 +162,11 @@ ON CONFLICT ("name") DO UPDATE
 SET "description" = EXCLUDED."description",
     "priceCents" = EXCLUDED."priceCents";
 
-INSERT INTO "EnabledModule" ("moduleName")
+INSERT INTO "EnabledModule" ("id", "moduleName")
 VALUES
-  ('CUSTOM_ROLES'),
-  ('STATISTICS'),
-  ('NAVIGATION')
+  (gen_random_uuid(), 'CUSTOM_ROLES'),
+  (gen_random_uuid(), 'STATISTICS'),
+  (gen_random_uuid(), 'NAVIGATION')
 ON CONFLICT ("moduleName") DO NOTHING;
 
 COMMIT;
