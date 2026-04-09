@@ -4,30 +4,17 @@ import {
   Logger,
 } from '@nestjs/common';
 import { execFile } from 'node:child_process';
+import * as bcrypt from 'bcrypt';
+import { access, readdir } from 'node:fs/promises';
 import { constants } from 'node:fs';
-import { access, readdir, readFile, stat } from 'node:fs/promises';
-import { createRequire } from 'node:module';
 import { Socket } from 'node:net';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
-const localRequire = createRequire(__filename);
 const RETRY_ATTEMPTS = 10;
 const INITIAL_BACKOFF_MS = 2000;
 const MAX_BACKOFF_MS = 5000;
 const DB_READINESS_TIMEOUT_MS = 2000;
-
-interface DatabasePackageJson {
-  prisma?: {
-    seed?: string;
-  };
-}
-
-interface SeedCommandResolution {
-  command: string;
-  source: 'package.json' | 'prisma.config.ts';
-  filePath?: string;
-}
 
 interface TenantProvisioningAddressInput {
   addressId?: string;
@@ -65,6 +52,7 @@ export class TenantProvisioningService {
   private static readonly DEFAULT_PHONE_NUMBER = '+430000000000';
   private static readonly DEFAULT_IBAN = 'AT000000000000000000';
   private static readonly DEFAULT_COMPANY_NUMBER = 'PENDING';
+  private static readonly DEFAULT_SUPER_ADMIN_PASSWORD = 'kennwort1';
 
   private buildNormalizedSeedPayload(
     options?: TenantProvisioningSeedOptions,
@@ -128,35 +116,123 @@ export class TenantProvisioningService {
     databaseUrl: string,
     options?: TenantProvisioningSeedOptions,
   ): Promise<void> {
-    const seedCommand = await this.resolveSeedCommand();
-
-    if (!seedCommand) {
-      this.logger.warn(
-        'Skipping tenant seed because no Prisma seed command could be resolved in the runtime image.',
-      );
-      return;
-    }
-
     const payload = this.buildNormalizedSeedPayload(options);
-
-    this.logger.log(
-      `Using tenant seed command from ${seedCommand.source}: ${seedCommand.command}`,
-    );
 
     await this.withRetry(async (attempt) => {
       await this.waitForDatabaseReady(databaseUrl, attempt);
-      await this.runPrismaCommand(['db', 'seed'], databaseUrl, {
-        PRISMA_SCHEMA_TARGET: 'tenant',
-        TENANT_SEED_SUBDOMAIN: payload.subdomain ?? 'tenant',
-        TENANT_SEED_PAYLOAD: JSON.stringify(payload),
-      });
-    }, 'Prisma seed');
+      await this.runPsqlSeed(databaseUrl, payload);
+    }, 'PostgreSQL seed');
   }
 
   buildSeedPreview(
     options?: TenantProvisioningSeedOptions,
   ): TenantProvisioningSeedOptions {
     return this.buildNormalizedSeedPayload(options);
+  }
+
+  private async runPsqlSeed(
+    databaseUrl: string,
+    payload: TenantProvisioningSeedOptions,
+  ): Promise<void> {
+    const normalizedPayload = this.buildNormalizedSeedPayload(payload);
+    const databasePackageDir = await this.getDatabasePackageDir();
+    const seedFilePath = path.join(
+      databasePackageDir,
+      'prisma',
+      'tenant-seed.sql',
+    );
+
+    await access(seedFilePath, constants.F_OK);
+
+    const passwordHash = await bcrypt.hash(
+      TenantProvisioningService.DEFAULT_SUPER_ADMIN_PASSWORD,
+      10,
+    );
+
+    const psqlArgs = [
+      '--dbname',
+      databaseUrl,
+      '-v',
+      'ON_ERROR_STOP=1',
+      '-v',
+      `company_name=${normalizedPayload.companyName ?? ''}`,
+      '-v',
+      `site_email=${normalizedPayload.email ?? ''}`,
+      '-v',
+      `phone_number=${normalizedPayload.phoneNumber ?? ''}`,
+      '-v',
+      `iban=${normalizedPayload.iban ?? ''}`,
+      '-v',
+      `company_number=${normalizedPayload.companyNumber ?? ''}`,
+      '-v',
+      `address_city=${normalizedPayload.address?.city ?? ''}`,
+      '-v',
+      `address_country=${normalizedPayload.address?.country ?? ''}`,
+      '-v',
+      `address_post_code=${normalizedPayload.address?.postCode ?? ''}`,
+      '-v',
+      `address_state=${normalizedPayload.address?.state ?? ''}`,
+      '-v',
+      `address_street_name=${normalizedPayload.address?.streetName ?? ''}`,
+      '-v',
+      `address_street_number=${normalizedPayload.address?.streetNumber ?? ''}`,
+      '-v',
+      `super_admin_email=${normalizedPayload.superAdmin?.email ?? ''}`,
+      '-v',
+      `super_admin_password_hash=${passwordHash}`,
+      '-v',
+      `super_admin_first_name=${normalizedPayload.superAdmin?.firstName ?? ''}`,
+      '-v',
+      `super_admin_last_name=${normalizedPayload.superAdmin?.lastName ?? ''}`,
+      '-f',
+      seedFilePath,
+    ];
+
+    await new Promise<void>((resolve, reject) => {
+      execFile(
+        'psql',
+        psqlArgs,
+        {
+          env: {
+            ...process.env,
+          },
+          maxBuffer: 10 * 1024 * 1024,
+        },
+        (error, stdout, stderr) => {
+          if (!error) {
+            this.logger.log(
+              `psql seed completed successfully for ${new URL(databaseUrl).hostname}`,
+            );
+
+            if (stdout?.trim()) {
+              this.logger.log(`psql seed stdout: ${stdout.trim()}`);
+            }
+            resolve();
+            return;
+          }
+
+          const output = [stderr, stdout, error.message]
+            .filter((value) => Boolean(value && value.trim()))
+            .join('\n')
+            .trim();
+
+          const enrichedOutput = this.enrichPrismaConnectionError(
+            output,
+            databaseUrl,
+          );
+
+          this.logger.error(
+            `psql seed failed for ${databaseUrl}: ${enrichedOutput}`,
+          );
+
+          reject(
+            new InternalServerErrorException(
+              `psql seed failed: ${enrichedOutput}`,
+            ),
+          );
+        },
+      );
+    });
   }
 
   private async waitForDatabaseReady(
@@ -228,7 +304,7 @@ export class TenantProvisioningService {
   ): Promise<void> {
     const databasePackageDir = await this.getDatabasePackageDir();
     const schemaPath = await this.resolveTenantSchemaPath(databasePackageDir);
-    const prismaCliPath = localRequire.resolve('prisma/build/index.js', {
+    const prismaCliPath = require.resolve('prisma/build/index.js', {
       paths: [databasePackageDir],
     });
     const prismaConfigPath = path.join(databasePackageDir, 'prisma.config.ts');
@@ -326,125 +402,6 @@ export class TenantProvisioningService {
     throw lastError;
   }
 
-  private async resolveSeedCommand(): Promise<SeedCommandResolution | null> {
-    const databasePackageDir = await this.getDatabasePackageDir();
-    const packageJsonPath = path.join(databasePackageDir, 'package.json');
-    const prismaConfigPath = path.join(databasePackageDir, 'prisma.config.ts');
-
-    try {
-      const packageJson = JSON.parse(
-        await readFile(packageJsonPath, 'utf8'),
-      ) as DatabasePackageJson;
-      const packageJsonSeed = packageJson.prisma?.seed?.trim();
-
-      if (packageJsonSeed) {
-        const resolvedFilePath = await this.tryResolveSeedFileFromCommand(
-          databasePackageDir,
-          packageJsonSeed,
-        );
-
-        return {
-          command: packageJsonSeed,
-          source: 'package.json',
-          filePath: resolvedFilePath,
-        };
-      }
-    } catch {
-      // continue
-    }
-
-    try {
-      const prismaConfigContent = await readFile(prismaConfigPath, 'utf8');
-      const seedMatch = prismaConfigContent.match(
-        /seed\s*:\s*['"`]([^'"`]+)['"`]/,
-      );
-      const prismaConfigSeed = seedMatch?.[1]?.trim();
-
-      if (prismaConfigSeed) {
-        const resolvedFilePath = await this.tryResolveSeedFileFromCommand(
-          databasePackageDir,
-          prismaConfigSeed,
-        );
-
-        return {
-          command: prismaConfigSeed,
-          source: 'prisma.config.ts',
-          filePath: resolvedFilePath,
-        };
-      }
-    } catch {
-      // continue
-    }
-
-    return null;
-  }
-
-  private async tryResolveSeedFileFromCommand(
-    databasePackageDir: string,
-    command: string,
-  ): Promise<string | undefined> {
-    const normalizedCommand = command.trim();
-    const commandParts = normalizedCommand
-      .split(/\s+/)
-      .map((part) => part.trim())
-      .filter(Boolean);
-
-    const candidatePaths = commandParts
-      .filter(
-        (part) =>
-          part.endsWith('.ts') ||
-          part.endsWith('.js') ||
-          part.endsWith('.mjs') ||
-          part.endsWith('.cjs'),
-      )
-      .map((part) =>
-        path.isAbsolute(part) ? part : path.join(databasePackageDir, part),
-      );
-
-    const fallbackCandidatePaths = [
-      path.join(databasePackageDir, 'prisma/seed.ts'),
-      path.join(databasePackageDir, 'prisma/seed.js'),
-      path.join(databasePackageDir, 'prisma/seed.mjs'),
-      path.join(databasePackageDir, 'prisma/seed.cjs'),
-    ];
-
-    for (const candidatePath of [
-      ...candidatePaths,
-      ...fallbackCandidatePaths,
-    ]) {
-      try {
-        const candidateStat = await stat(candidatePath);
-
-        if (candidateStat.isFile()) {
-          return candidatePath;
-        }
-      } catch {
-        // continue
-      }
-    }
-
-    return undefined;
-  }
-
-  private async ensureSeedRuntimeLooksValid(): Promise<void> {
-    const seedCommand = await this.resolveSeedCommand();
-
-    if (!seedCommand) {
-      return;
-    }
-
-    if (!seedCommand.filePath) {
-      this.logger.warn(
-        `Seed command was found in ${seedCommand.source}, but no seed file could be verified in the runtime image. Command: ${seedCommand.command}`,
-      );
-      return;
-    }
-
-    this.logger.log(
-      `Verified seed file for tenant provisioning: ${seedCommand.filePath}`,
-    );
-  }
-
   private async resolveTenantSchemaPath(
     databasePackageDir: string,
   ): Promise<string> {
@@ -487,7 +444,6 @@ export class TenantProvisioningService {
     const databasePackageDir = path.join(workspaceRoot, 'packages/database');
 
     await access(databasePackageDir, constants.F_OK);
-    await this.ensureSeedRuntimeLooksValid();
 
     return databasePackageDir;
   }

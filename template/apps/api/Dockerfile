@@ -44,6 +44,7 @@ WORKDIR /repo
 ARG DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres
 ENV NODE_ENV=production
 ENV DATABASE_URL=${DATABASE_URL}
+RUN apk add --no-cache postgresql-client
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
