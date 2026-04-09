@@ -2,6 +2,12 @@ BEGIN;
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
+CREATE TEMP TABLE IF NOT EXISTS seed_address_row (
+  "addressId" uuid PRIMARY KEY
+) ON COMMIT DROP;
+
+TRUNCATE seed_address_row;
+
 WITH existing_address AS (
   SELECT "addressId"
   FROM "addresses"
@@ -54,6 +60,11 @@ address_row AS (
   SELECT "addressId" FROM existing_address
   LIMIT 1
 )
+INSERT INTO seed_address_row ("addressId")
+SELECT "addressId"
+FROM address_row
+ON CONFLICT ("addressId") DO NOTHING;
+
 INSERT INTO "roles" ("roleId", "name", "description")
 VALUES (gen_random_uuid(), 'Admin', 'Full access role')
 ON CONFLICT ("name") DO UPDATE
@@ -98,10 +109,10 @@ INSERT INTO "employees" (
 )
 SELECT
   gen_random_uuid(),
-  'admin@admin.com',
-  'changeMe',
-  'Admin',
-  'User',
+  COALESCE(NULLIF(:'super_admin_email', ''), 'admin@admin.com'),
+  COALESCE(NULLIF(:'super_admin_password_hash', ''), 'changeMe'),
+  COALESCE(NULLIF(:'super_admin_first_name', ''), 'Admin'),
+  COALESCE(NULLIF(:'super_admin_last_name', ''), 'User'),
   false,
   true,
   role_row."roleId"
@@ -143,7 +154,7 @@ SELECT
   :'iban',
   :'company_number',
   address_row."addressId"
-FROM address_row
+FROM seed_address_row AS address_row
 ON CONFLICT ("email") DO UPDATE
 SET "companyName" = EXCLUDED."companyName",
     "logoPath" = EXCLUDED."logoPath",
