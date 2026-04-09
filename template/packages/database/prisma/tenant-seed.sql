@@ -1,8 +1,9 @@
 BEGIN;
+-- Mapped Prisma tables use @@map(...) names; Module and EnabledModule keep Prisma default table names.
 
 WITH existing_address AS (
   SELECT "addressId"
-  FROM "Address"
+  FROM "addresses"
   WHERE "city" = :'address_city'
     AND "country" = :'address_country'
     AND "postCode" = :'address_post_code'
@@ -12,7 +13,7 @@ WITH existing_address AS (
   LIMIT 1
 ),
 updated_address AS (
-  UPDATE "Address"
+  UPDATE "addresses"
   SET "city" = :'address_city',
       "country" = :'address_country',
       "postCode" = :'address_post_code',
@@ -24,7 +25,7 @@ updated_address AS (
   RETURNING "addressId"
 ),
 inserted_address AS (
-  INSERT INTO "Address" (
+  INSERT INTO "addresses" (
     "city",
     "country",
     "postCode",
@@ -50,13 +51,13 @@ address_row AS (
   SELECT "addressId" FROM existing_address
   LIMIT 1
 )
-INSERT INTO "Role" ("name", "description")
+INSERT INTO "roles" ("name", "description")
 VALUES ('Admin', 'Default administrator role')
 ON CONFLICT ("name") DO UPDATE
 SET "description" = EXCLUDED."description",
     "deleted" = false;
 
-INSERT INTO "Action" ("key", "description")
+INSERT INTO "actions" ("key", "description")
 VALUES
   ('create', 'create action'),
   ('read', 'read action'),
@@ -66,7 +67,7 @@ ON CONFLICT ("key") DO UPDATE
 SET "description" = EXCLUDED."description",
     "deleted" = false;
 
-INSERT INTO "Resource" ("key", "description")
+INSERT INTO "resources" ("key", "description")
 VALUES
   ('employees', 'employees resource'),
   ('roles', 'roles resource'),
@@ -82,11 +83,11 @@ ON CONFLICT ("key") DO UPDATE
 SET "description" = EXCLUDED."description",
     "deleted" = false;
 
-INSERT INTO "Permission" ("roleId", "resourceId", "actionId", "allowed")
+INSERT INTO "permissions" ("roleId", "resourceId", "actionId", "allowed")
 SELECT role_row."roleId", resource_row."id", action_row."id", true
-FROM "Role" AS role_row
-CROSS JOIN "Resource" AS resource_row
-CROSS JOIN "Action" AS action_row
+FROM "roles" AS role_row
+CROSS JOIN "resources" AS resource_row
+CROSS JOIN "actions" AS action_row
 WHERE role_row."name" = 'Admin'
   AND resource_row."key" IN (
     'employees',
@@ -104,7 +105,7 @@ WHERE role_row."name" = 'Admin'
 ON CONFLICT ("roleId", "resourceId", "actionId") DO UPDATE
 SET "allowed" = EXCLUDED."allowed";
 
-INSERT INTO "Employees" (
+INSERT INTO "employees" (
   "email",
   "password",
   "firstName",
@@ -121,7 +122,7 @@ SELECT
   false,
   true,
   role_row."roleId"
-FROM "Role" AS role_row
+FROM "roles" AS role_row
 WHERE role_row."name" = 'Admin'
 ON CONFLICT ("email") DO UPDATE
 SET "password" = EXCLUDED."password",
@@ -131,7 +132,7 @@ SET "password" = EXCLUDED."password",
     "superAdmin" = true,
     "roleId" = EXCLUDED."roleId";
 
-INSERT INTO "SiteConfig" (
+INSERT INTO "siteConfigs" (
   "companyName",
   "email",
   "phoneNumber",
