@@ -164,14 +164,21 @@ SET "companyName" = EXCLUDED."companyName",
     "addressId" = EXCLUDED."addressId",
     "deleted" = false;
 
-INSERT INTO "Module" ("name", "description", "priceCents")
+INSERT INTO "Module" (
+  "name",
+  "description",
+  "priceCents",
+  "createdAt",
+  "modifiedAt"
+)
 VALUES
-  ('CUSTOM_ROLES', 'Custom roles and permissions', 0),
-  ('STATISTICS', 'Statistics module', 0),
-  ('NAVIGATION', 'Navigation module', 0)
+  ('CUSTOM_ROLES', 'Custom roles and permissions', 0, now(), now()),
+  ('STATISTICS', 'Statistics module', 0, now(), now()),
+  ('NAVIGATION', 'Navigation module', 0, now(), now())
 ON CONFLICT ("name") DO UPDATE
 SET "description" = EXCLUDED."description",
-    "priceCents" = EXCLUDED."priceCents";
+    "priceCents" = EXCLUDED."priceCents",
+    "modifiedAt" = now();
 
 INSERT INTO "EnabledModule" ("id", "moduleName")
 VALUES
