@@ -109,7 +109,7 @@ INSERT INTO "employees" (
 )
 SELECT
   gen_random_uuid(),
-  COALESCE(NULLIF(:'super_admin_email', ''), 'admin@admin.com'),
+  COALESCE(NULLIF(:'super_admin_email', ''), NULLIF(:'site_email', ''), 'admin@admin.com'),
   COALESCE(NULLIF(:'super_admin_password_hash', ''), 'changeMe'),
   COALESCE(NULLIF(:'super_admin_first_name', ''), 'Admin'),
   COALESCE(NULLIF(:'super_admin_last_name', ''), 'User'),

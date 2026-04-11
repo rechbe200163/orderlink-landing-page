@@ -8,7 +8,19 @@ export class CreateTenantOnboardingTenantDto extends OmitType(CreateTenantDto, [
   'addressId',
   'dbUrl',
   'subdomain',
-] as const) {}
+] as const) {
+  @ApiProperty()
+  email: string;
+
+  @ApiProperty()
+  phoneNumber: string;
+
+  @ApiProperty()
+  iban: string;
+
+  @ApiProperty()
+  companyNumber: string;
+}
 
 export class CreateTenantOnboardingDto {
   @ApiProperty({ type: CreateTenantOnboardingTenantDto })

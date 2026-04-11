@@ -5,16 +5,20 @@
 # ------------------------
 FROM node:22-alpine AS deps
 WORKDIR /repo
+ENV PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/api/package.json apps/api/package.json
 COPY packages/database/package.json packages/database/package.json
 
-# falls du weitere workspace packages importierst:
-COPY packages ./packages
-
-RUN pnpm install --frozen-lockfile
+# Wenn weitere workspace packages in apps/api oder packages/database verwendet werden,
+# hier ebenfalls nur deren package.json gezielt reinkopieren.
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    pnpm config set store-dir /pnpm/store && \
+    pnpm fetch --frozen-lockfile && \
+    pnpm install --frozen-lockfile --offline
 
 
 # ------------------------
@@ -22,25 +26,30 @@ RUN pnpm install --frozen-lockfile
 # ------------------------
 FROM node:22-alpine AS build
 WORKDIR /repo
+ENV PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
 RUN corepack enable && corepack prepare pnpm@latest --activate
 ARG DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres
 ENV NODE_ENV=production
 ENV DATABASE_URL=${DATABASE_URL}
 
-COPY --from=deps /repo/node_modules ./node_modules
-COPY --from=deps /repo/apps/api/node_modules ./apps/api/node_modules
-COPY --from=deps /repo/packages/database/node_modules ./packages/database/node_modules
-COPY . .
+COPY apps ./apps
+COPY packages ./packages
+COPY tsconfig*.json ./
 
-RUN pnpm --filter @workspace/database run generate
-RUN pnpm --filter @workspace/database run build
-RUN pnpm --filter api run build
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    pnpm config set store-dir /pnpm/store && \
+    pnpm --filter @workspace/database run generate && \
+    pnpm --filter @workspace/database run build && \
+    pnpm --filter api run build
 
 # ------------------------
 # runner
 # ------------------------
 FROM node:22-alpine AS runner
 WORKDIR /repo
+ENV PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
 ARG DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres
 ENV NODE_ENV=production
 ENV DATABASE_URL=${DATABASE_URL}
@@ -57,7 +66,9 @@ COPY packages/database/package.json packages/database/package.json
 COPY --from=build /repo/packages/database ./packages/database
 
 # ✅ Nur prod deps installieren (im Workspace-Kontext)
-RUN pnpm install --prod --frozen-lockfile
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    pnpm config set store-dir /pnpm/store && \
+    pnpm install --prod --frozen-lockfile
 RUN pnpm --filter @workspace/database run generate
 # ✅ Build output der API rein
 COPY --from=build /repo/apps/api/dist ./apps/api/dist

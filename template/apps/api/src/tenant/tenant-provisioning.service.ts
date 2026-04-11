@@ -38,6 +38,7 @@ interface TenantProvisioningSeedOptions {
     email?: string;
     firstName?: string;
     lastName?: string;
+    password?: string;
   };
 }
 
@@ -53,6 +54,7 @@ export class TenantProvisioningService {
   private static readonly DEFAULT_IBAN = 'AT000000000000000000';
   private static readonly DEFAULT_COMPANY_NUMBER = 'PENDING';
   private static readonly DEFAULT_SUPER_ADMIN_PASSWORD = 'kennwort1';
+  private static readonly DEFAULT_SUPER_ADMIN_EMAIL = 'admin@admin.com';
 
   private buildNormalizedSeedPayload(
     options?: TenantProvisioningSeedOptions,
@@ -80,6 +82,7 @@ export class TenantProvisioningService {
       superAdmin: {
         email:
           options?.superAdmin?.email?.trim() ||
+          options?.email?.trim() ||
           `${TenantProvisioningService.DEFAULT_SUPER_ADMIN_EMAIL_LOCAL_PART}@${normalizedEmailDomain}`,
         firstName:
           options?.superAdmin?.firstName?.trim() ||
@@ -87,6 +90,9 @@ export class TenantProvisioningService {
         lastName:
           options?.superAdmin?.lastName?.trim() ||
           TenantProvisioningService.DEFAULT_SUPER_ADMIN_LAST_NAME,
+        password:
+          options?.superAdmin?.password?.trim() ||
+          TenantProvisioningService.DEFAULT_SUPER_ADMIN_PASSWORD,
       },
     };
   }
@@ -145,7 +151,8 @@ export class TenantProvisioningService {
     await access(seedFilePath, constants.F_OK);
 
     const passwordHash = await hash(
-      TenantProvisioningService.DEFAULT_SUPER_ADMIN_PASSWORD,
+      normalizedPayload.superAdmin?.password?.trim() ||
+        TenantProvisioningService.DEFAULT_SUPER_ADMIN_PASSWORD,
       10,
     );
 
