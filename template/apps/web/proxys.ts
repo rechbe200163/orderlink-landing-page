@@ -65,7 +65,7 @@ export default async function middleware(request: NextRequest) {
   }
 
   const isPublicRoute = PUBLIC_ROUTES.some((route) =>
-    new RegExp(route).test(pathname)
+    new RegExp(route).test(pathname),
   );
 
   if (isPublicRoute) {
