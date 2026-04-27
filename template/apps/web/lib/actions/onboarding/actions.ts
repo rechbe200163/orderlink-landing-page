@@ -24,7 +24,9 @@ interface CreateTenantResult {
   };
 }
 
-export async function createTenant(input: CreateTenantInput): Promise<CreateTenantResult> {
+export async function createTenant(
+  input: CreateTenantInput,
+): Promise<CreateTenantResult> {
   try {
     const apiUrl = process.env.API_URL || 'http://localhost:3001';
 
@@ -40,7 +42,9 @@ export async function createTenant(input: CreateTenantInput): Promise<CreateTena
       const errorData = await response.json().catch(() => ({}));
       return {
         success: false,
-        error: errorData.message || `Fehler beim Erstellen des Accounts (${response.status})`,
+        error:
+          errorData.message ||
+          `Fehler beim Erstellen des Accounts (${response.status})`,
       };
     }
 
@@ -57,7 +61,8 @@ export async function createTenant(input: CreateTenantInput): Promise<CreateTena
     console.error('Error creating tenant:', error);
     return {
       success: false,
-      error: 'Verbindung zum Server fehlgeschlagen. Bitte versuche es später erneut.',
+      error:
+        'Verbindung zum Server fehlgeschlagen. Bitte versuche es später erneut.',
     };
   }
 }

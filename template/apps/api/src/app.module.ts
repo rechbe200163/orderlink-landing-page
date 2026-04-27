@@ -1,42 +1,41 @@
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
-import { TenantModule } from './tenant/tenant.module';
-import { AddressesModule } from './addresses/addresses.module';
-import { DokployService } from './dokploy/dokploy.service';
+import { MqttModule } from './mqtt/mqtt.module';
+import { DevicesModule } from './devices/devices.module';
 import z from 'zod';
 
 const envSchema = z.object({
-  DATABASE_URL: z.string().min(1), // url() kann bei prisma strings manchmal nerven
+  DATABASE_URL: z.string().min(1),
+  MQTT_BROKER_URL: z.string().min(1),
+  JWT_SECRET: z.string().min(10),
 });
 
 @Module({
   imports: [
+    UsersModule,
     AuthModule,
-    ConfigModule.forRoot({
-      isGlobal: true,
-      envFilePath: ['.env'],
-    }),
     ThrottlerModule.forRoot({
       throttlers: [
         {
-          ttl: 60000, // milliseconds
-          limit: 10, // requests per ttl
+          ttl: 60000,
+          limit: 10,
         },
       ],
     }),
     ConfigModule.forRoot({
-      isGlobal: true, // Makes ConfigService globally available
-      envFilePath: '.env', // Default
+      isGlobal: true,
+      envFilePath: ['.env', '../../packages/database/.env'],
       validate: (env) => envSchema.parse(env),
     }),
-    TenantModule,
-    AddressesModule,
+    MqttModule,
+    DevicesModule,
   ],
   controllers: [AppController],
-  providers: [AppService, DokployService],
+  providers: [AppService],
 })
 export class AppModule {}
