@@ -6,7 +6,7 @@ export function HeroSection() {
   return (
     <section className='relative overflow-hidden py-20 sm:py-32'>
       <div className='absolute inset-0 -z-10 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-primary/5 via-background to-background' />
-
+      
       <div className='mx-auto max-w-6xl px-4 sm:px-6 lg:px-8'>
         <div className='mx-auto max-w-3xl text-center'>
           <div className='mb-6 inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/5 px-4 py-1.5 text-sm text-primary'>
@@ -16,24 +16,22 @@ export function HeroSection() {
 
           <h1 className='text-balance text-4xl font-bold tracking-tight sm:text-5xl lg:text-6xl'>
             Dein ERP-System für KMU{' '}
-            <span className='text-primary'>
-              modular, automatisiert, sofort startklar
-            </span>
+            <span className='text-primary'>modular, automatisiert, sofort startklar</span>
           </h1>
 
           <p className='mt-6 text-pretty text-lg leading-relaxed text-muted-foreground sm:text-xl'>
-            Verwalte Kunden, Bestellungen, Auslieferung und Analysen in einem
-            System. Schluss mit Excel-Chaos und manuellen Prozessen.
+            Verwalte Kunden, Bestellungen, Auslieferung und Analysen in einem System. 
+            Schluss mit Excel-Chaos und manuellen Prozessen.
           </p>
 
           <div className='mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row'>
-            <Button size='lg' className='w-full sm:w-auto'>
+            <Button size='lg' asChild className='w-full sm:w-auto'>
               <Link href='/onboarding'>
                 Kostenlos starten
                 <IconArrowRight className='ml-2 size-4' />
               </Link>
             </Button>
-            <Button size='lg' variant='outline' className='w-full sm:w-auto'>
+            <Button size='lg' variant='outline' asChild className='w-full sm:w-auto'>
               <Link href='#features'>Features entdecken</Link>
             </Button>
           </div>
@@ -47,9 +45,7 @@ export function HeroSection() {
                 <div className='size-3 rounded-full bg-yellow-500/60' />
                 <div className='size-3 rounded-full bg-green-500/60' />
               </div>
-              <span className='text-xs text-muted-foreground'>
-                OrderLink Admin Tool
-              </span>
+              <span className='text-xs text-muted-foreground'>OrderLink Admin Tool</span>
             </div>
             <div className='aspect-[16/9] bg-gradient-to-br from-muted/30 to-muted/10 p-8'>
               <div className='grid h-full grid-cols-4 gap-4'>
@@ -82,10 +78,7 @@ export function HeroSection() {
                   </div>
                   <div className='mt-4 space-y-2'>
                     {[1, 2, 3].map((i) => (
-                      <div
-                        key={i}
-                        className='flex items-center gap-4 rounded-lg bg-muted/20 p-3'
-                      >
+                      <div key={i} className='flex items-center gap-4 rounded-lg bg-muted/20 p-3'>
                         <div className='size-8 rounded-lg bg-primary/10' />
                         <div className='flex-1 space-y-1'>
                           <div className='h-2 w-32 rounded bg-muted' />
