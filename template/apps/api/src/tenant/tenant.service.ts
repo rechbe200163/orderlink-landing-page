@@ -1,20 +1,71 @@
-import { ApiProperty, OmitType } from '@nestjs/swagger';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { CreateTenantDto } from './dto/create-tenant.dto';
+import { UpdateTenantDto } from './dto/update-tenant.dto';
 
-export class CreateTenantOnboardingTenantDto extends OmitType(CreateTenantDto, [
-  'addressId',
-  'dbUrl',
-  'subdomain',
-] as const) {
-  @ApiProperty()
-  email: string;
+@Injectable()
+export class TenantService {
+  private tenants: any[] = [];
+  private idCounter = 1;
 
-  @ApiProperty()
-  phoneNumber: string;
+  async createNew(tenant: any, address: any) {
+    const newTenant = {
+      id: this.idCounter++,
+      ...tenant,
+      address,
+      createdAt: new Date(),
+    };
 
-  @ApiProperty()
-  iban: string;
+    this.tenants.push(newTenant);
 
-  @ApiProperty()
-  companyNumber: string;
+    return newTenant;
+  }
+
+  async create(createTenantDto: CreateTenantDto) {
+    const newTenant = {
+      id: this.idCounter++,
+      ...createTenantDto,
+      createdAt: new Date(),
+    };
+
+    this.tenants.push(newTenant);
+
+    return newTenant;
+  }
+
+  async findAll() {
+    return this.tenants;
+  }
+
+  async findOne(id: number) {
+    const tenant = this.tenants.find((t) => t.id === id);
+
+    if (!tenant) {
+      throw new NotFoundException(`Tenant with id ${id} not found`);
+    }
+
+    return tenant;
+  }
+
+  async update(id: number, updateTenantDto: UpdateTenantDto) {
+    const tenant = await this.findOne(id);
+
+    Object.assign(tenant, updateTenantDto, {
+      updatedAt: new Date(),
+    });
+
+    return tenant;
+  }
+
+  async remove(id: number) {
+    const index = this.tenants.findIndex((t) => t.id === id);
+
+    if (index === -1) {
+      throw new NotFoundException(`Tenant with id ${id} not found`);
+    }
+
+    const deleted = this.tenants[index];
+    this.tenants.splice(index, 1);
+
+    return deleted;
+  }
 }

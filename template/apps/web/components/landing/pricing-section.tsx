@@ -1,6 +1,12 @@
 import Link from 'next/link';
 import { Button } from '@workspace/ui/components/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@workspace/ui/components/card';
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from '@workspace/ui/components/card';
 import { IconCheck, IconArrowRight } from '@tabler/icons-react';
 
 const includedFeatures = [
@@ -21,7 +27,8 @@ export function PricingSection() {
             Starte jetzt kostenlos
           </h2>
           <p className='mt-4 text-pretty text-lg text-muted-foreground'>
-            Teste OrderLink 14 Tage lang unverbindlich und überzeuge dich selbst von den Vorteilen.
+            Teste OrderLink 14 Tage lang unverbindlich und überzeuge dich selbst
+            von den Vorteilen.
           </p>
         </div>
 
@@ -49,12 +56,17 @@ export function PricingSection() {
                 ))}
               </ul>
 
-              <Button size='lg' asChild className='w-full'>
-                <Link href='/onboarding'>
-                  Jetzt starten
-                  <IconArrowRight className='ml-2 size-4' />
-                </Link>
-              </Button>
+              <Button
+                size='lg'
+                nativeButton={false}
+                className='w-full'
+                render={
+                  <Link href='/onboarding'>
+                    Jetzt starten
+                    <IconArrowRight className='ml-2 size-4' />
+                  </Link>
+                }
+              />
 
               <p className='text-center text-xs text-muted-foreground'>
                 Nach der Testphase ab 29€/Monat. Jederzeit kündbar.
